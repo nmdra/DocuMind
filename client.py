@@ -4,6 +4,7 @@ import asyncio
 import argparse
 import json
 import shlex
+from collections.abc import Mapping
 
 import chromadb
 import ollama
@@ -29,6 +30,7 @@ conversation_col = chroma.get_or_create_collection(
     name=CONVERSATION_COLLECTION_NAME,
     metadata={"hnsw:space": "cosine"},
 )
+EMPTY_MESSAGE_SENTINEL = "__EMPTY_MESSAGE__"
 
 
 def _tool_defs(tools) -> list[dict]:
@@ -77,6 +79,8 @@ def _load_history(session_id: str) -> list[dict]:
     for doc, meta in zip(docs, metas, strict=True):
         if not isinstance(meta, dict):
             continue
+        if meta.get("event") == "tool_calls":
+            continue
         role = meta.get("role")
         turn = meta.get("turn")
         if not isinstance(role, str) or not isinstance(turn, int):
@@ -93,7 +97,12 @@ def _load_history(session_id: str) -> list[dict]:
     return [msg for _, msg in items]
 
 
-def _persist_message(session_id: str, turn: int, message: dict) -> None:
+def _persist_message(
+    session_id: str,
+    turn: int,
+    message: dict,
+    extra_metadata: Mapping[str, int | str] | None = None,
+) -> None:
     role = message.get("role", "")
     content = message.get("content", "")
     if not isinstance(role, str) or not isinstance(content, str):
@@ -107,10 +116,12 @@ def _persist_message(session_id: str, turn: int, message: dict) -> None:
     name = message.get("name")
     if isinstance(name, str) and name:
         metadata["name"] = name
+    if extra_metadata:
+        metadata.update(extra_metadata)
 
     conversation_col.upsert(
         ids=[f"{session_id}-{turn:08d}"],
-        embeddings=[_embed(content or f"[{role}]")],
+        embeddings=[_embed(content or EMPTY_MESSAGE_SENTINEL)],
         documents=[content],
         metadatas=[metadata],
     )
@@ -196,8 +207,19 @@ async def run_agent(session_id: str, server_command: str) -> None:
                     {
                         "role": "assistant",
                         "content": msg.content or "",
-                        "name": "tool_calls",
-                    }
+                    },
+                    extra_metadata={
+                        "event": "tool_calls",
+                        "tool_calls_json": json.dumps(
+                            [
+                                {
+                                    "name": call.function.name,
+                                    "arguments": call.function.arguments,
+                                }
+                                for call in msg.tool_calls
+                            ]
+                        ),
+                    },
                 )
                 turn += 1
 

@@ -101,7 +101,7 @@ Override the server launch command used by the client:
 
 ```bash
 cd <project-root>
-python3 -m uv run python client.py --server-command "python3 -m uv run python server.py --transport stdio"
+python3 -m uv run python client.py --server-command "python3 -m uv run server.py --transport stdio"
 ```
 
 ## FastMCP tools (MVP)
