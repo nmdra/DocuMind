@@ -118,7 +118,7 @@ def _has_sentence_level_citations(content: str) -> bool:
     stripped = content.strip()
     if not stripped:
         return False
-    sentences = [sentence.strip() for sentence in SENTENCE_SPLIT_PATTERN.split(stripped) if sentence.strip()]
+    sentences = [s for s in (sentence.strip() for sentence in SENTENCE_SPLIT_PATTERN.split(stripped)) if s]
     if not sentences:
         return False
     return all(SOURCE_CITATION_PATTERN.search(sentence) for sentence in sentences)
@@ -143,7 +143,7 @@ def _answer_is_valid(content: str, allowed_sources: set[str]) -> bool:
     return _has_sentence_level_citations(content) and _citations_match_sources(content, allowed_sources)
 
 
-def _context_block(context_text: str) -> str:
+def _context_blocks(context_text: str) -> str:
     return f"Context blocks:\n{context_text}"
 
 
@@ -363,7 +363,7 @@ async def run_agent(
                     request_messages = [
                         {"role": "system", "content": STRICT_RAG_SYSTEM_PROMPT},
                         *history,
-                        {"role": "system", "content": _context_block(context_text)},
+                        {"role": "system", "content": _context_blocks(context_text)},
                     ]
                     try:
                         response = ollama_client.chat(model=CHAT_MODEL, messages=request_messages)
