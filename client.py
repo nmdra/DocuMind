@@ -50,8 +50,7 @@ STRICT_RAG_SYSTEM_PROMPT = (
     "5. Cite only sources that appear in the provided context blocks."
 )
 SOURCE_CITATION_PATTERN = re.compile(r"\[Source:\s*([^\]]+)\]")
-SENTENCE_PATTERN = re.compile(r"[^.!?\n]+[.!?]")
-SOURCE_LINE_PATTERN = re.compile(r"source=(.+)$")
+SOURCE_LINE_PATTERN = re.compile(r"source=(.+?)\s*$")
 NO_RESULTS_MESSAGE = "No results found."
 
 
@@ -115,7 +114,10 @@ def _is_refusal(content: str) -> bool:
 
 
 def _has_sentence_level_citations(content: str) -> bool:
-    sentences = [s.strip() for s in SENTENCE_PATTERN.findall(content) if s.strip()]
+    stripped = content.strip()
+    if not stripped:
+        return False
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", stripped) if s.strip()]
     if not sentences:
         return False
     return all(SOURCE_CITATION_PATTERN.search(sentence) for sentence in sentences)
@@ -138,6 +140,11 @@ def _answer_is_valid(content: str, allowed_sources: set[str]) -> bool:
 
 def _context_block(context_text: str) -> str:
     return f"Context blocks:\n{context_text}"
+
+
+def _is_no_results_context(context_text: str) -> bool:
+    normalized = context_text.strip().lower()
+    return normalized == NO_RESULTS_MESSAGE.lower() or normalized.startswith("no results found")
 
 
 def _embed(text: str) -> list[float]:
@@ -264,10 +271,11 @@ async def run_agent(
         try:
             tool_resp = await session.list_tools()
             raw_tools = getattr(tool_resp, "tools", tool_resp)
-            tool_names = {
-                (getattr(t, "name", None) if not isinstance(t, Mapping) else t.get("name"))
-                for t in (raw_tools if isinstance(raw_tools, list) else [])
-            }
+            tool_names = set()
+            for t in (raw_tools if isinstance(raw_tools, list) else []):
+                name = getattr(t, "name", None) if not isinstance(t, Mapping) else t.get("name")
+                if isinstance(name, str) and name:
+                    tool_names.add(name)
         except Exception:  # pragma: no cover - transport/tool-list failure path
             logger.exception("Failed to list server tools. Agent will continue without server tools.")
             console.print(
@@ -338,7 +346,7 @@ async def run_agent(
                     {"query": user_input, "n_results": TOP_K},
                 )
                 context_text = _tool_result_text(context_result)
-                if not context_text or context_text.strip() == NO_RESULTS_MESSAGE:
+                if not context_text or _is_no_results_context(context_text):
                     assistant_text = STRICT_RAG_FALLBACK
                 else:
                     allowed_sources = _extract_sources_from_context(context_text)
