@@ -28,7 +28,7 @@ ollama list
 ## Project layout
 
 ```text
-/home/runner/work/DocuMind/DocuMind/
+<project-root>/
 ├── pyproject.toml
 ├── uv.lock
 ├── .python-version
@@ -43,15 +43,15 @@ ollama list
 ## Setup
 
 ```bash
-cd /home/runner/work/DocuMind/DocuMind
+cd <project-root>
 python3 -m uv sync
 ```
 
 ## Ingest documents
 
 ```bash
-python3 -m uv run python ingest.py /home/runner/work/DocuMind/DocuMind/data/my_notes.txt
-python3 -m uv run python ingest.py /home/runner/work/DocuMind/DocuMind/data/notes.txt /home/runner/work/DocuMind/DocuMind/data/report.md
+python3 -m uv run python ingest.py data/my_notes.txt
+python3 -m uv run python ingest.py data/notes.txt data/report.md
 ```
 
 ## Run the agent
@@ -65,7 +65,7 @@ ollama serve
 Launch interactive client:
 
 ```bash
-cd /home/runner/work/DocuMind/DocuMind
+cd <project-root>
 python3 -m uv run python client.py
 ```
 
@@ -78,7 +78,7 @@ python3 -m uv run python client.py
 ## Ruff workflow
 
 ```bash
-cd /home/runner/work/DocuMind/DocuMind
+cd <project-root>
 python3 -m uv run ruff format .
 python3 -m uv run ruff check --fix .
 python3 -m uv run ruff format --check . && python3 -m uv run ruff check .
@@ -89,7 +89,7 @@ python3 -m uv run ruff format --check . && python3 -m uv run ruff check .
 Verify collection count:
 
 ```bash
-cd /home/runner/work/DocuMind/DocuMind
+cd <project-root>
 python3 -m uv run python -c "import chromadb; c=chromadb.PersistentClient('./chroma_db'); print(c.get_or_create_collection('documents').count())"
 ```
 
