@@ -19,8 +19,8 @@ from config import (
     CHAT_MODEL,
     CHROMA_PATH,
     CONVERSATION_COLLECTION_NAME,
-    DEFAULT_LOG_LEVEL,
     DEFAULT_CONVERSATION_SESSION_ID,
+    DEFAULT_LOG_LEVEL,
     DEFAULT_SERVER_COMMAND,
     DEFAULT_TRANSPORT,
     EMBED_MODEL,
@@ -39,6 +39,7 @@ conversation_col = chroma.get_or_create_collection(
 )
 EMPTY_MESSAGE_SENTINEL = "__EMPTY_MESSAGE__"
 LOGGING_LEVEL_MAP = logging.getLevelNamesMapping()
+MAX_TOOL_ITERATIONS_PER_TURN = 8
 
 
 def _configure_logging(level_name: str) -> None:
@@ -117,17 +118,60 @@ def _tool_result_text(result: object) -> str:
     return str(first)
 
 
-def _normalize_tool_args(args: object) -> dict:
+def _normalize_tool_args(args: object) -> tuple[dict, bool]:
     if isinstance(args, str):
         try:
             args = json.loads(args)
         except json.JSONDecodeError:
-            return {}
+            return {}, False
 
-    if isinstance(args, dict):
+    if isinstance(args, Mapping):
+        return dict(args), True
+
+    return {}, args is None
+
+
+def _tool_call_name(call: object) -> str:
+    function = getattr(call, "function", None)
+    name = getattr(function, "name", None)
+    if isinstance(name, str):
+        return name
+    if isinstance(function, Mapping):
+        mapped_name = function.get("name")
+        if isinstance(mapped_name, str):
+            return mapped_name
+    if isinstance(call, Mapping):
+        mapped_fn = call.get("function")
+        if isinstance(mapped_fn, Mapping):
+            mapped_name = mapped_fn.get("name")
+            if isinstance(mapped_name, str):
+                return mapped_name
+    return ""
+
+
+def _tool_call_arguments(call: object) -> object:
+    function = getattr(call, "function", None)
+    args = getattr(function, "arguments", None)
+    if args is not None:
         return args
+    if isinstance(function, Mapping):
+        return function.get("arguments")
+    if isinstance(call, Mapping):
+        mapped_fn = call.get("function")
+        if isinstance(mapped_fn, Mapping):
+            return mapped_fn.get("arguments")
+    return None
 
-    return {}
+
+def _tool_call_id(call: object, index: int) -> str:
+    call_id = getattr(call, "id", None)
+    if isinstance(call_id, str) and call_id:
+        return call_id
+    if isinstance(call, Mapping):
+        mapped_id = call.get("id")
+        if isinstance(mapped_id, str) and mapped_id:
+            return mapped_id
+    return f"tool_call_{index}"
 
 
 def _embed(text: str) -> list[float]:
@@ -256,7 +300,9 @@ async def run_agent(
             raw_tools = getattr(tool_resp, "tools", tool_resp)
             tools = _tool_defs(raw_tools if isinstance(raw_tools, list) else [])
         except Exception:  # pragma: no cover - transport/tool-list failure path
-            logger.exception("Failed to list server tools. Agent will continue without server tools.")
+            logger.exception(
+                "Failed to list server tools. Agent will continue without server tools."
+            )
             console.print(
                 "[bold yellow]Warning:[/bold yellow] Failed to list MCP tools; continuing without tool access."
             )
@@ -312,14 +358,43 @@ async def run_agent(
             _persist_message(session_id, turn, user_message)
             turn += 1
 
+            llm_iteration = 0
             while True:
+                llm_iteration += 1
+                if llm_iteration > MAX_TOOL_ITERATIONS_PER_TURN:
+                    warning_msg = f"Stopped after {MAX_TOOL_ITERATIONS_PER_TURN} consecutive tool-call iterations."
+                    logger.warning(warning_msg)
+                    console.print(f"[bold yellow]Warning:[/bold yellow] {warning_msg}")
+                    assistant_message = {"role": "assistant", "content": warning_msg}
+                    history.append(assistant_message)
+                    _persist_message(session_id, turn, assistant_message)
+                    turn += 1
+                    break
+
+                llm_start = time.perf_counter()
+                logger.info(
+                    "LLM request started model=%s history_len=%d tools_available=%d iteration=%d",
+                    CHAT_MODEL,
+                    len(history),
+                    len(tools),
+                    llm_iteration,
+                )
                 try:
                     response = ollama_client.chat(model=CHAT_MODEL, messages=history, tools=tools)
                 except Exception as exc:  # pragma: no cover - network/service failure path
                     console.print(f"[bold red]Ollama request failed:[/bold red] {exc}")
+                    logger.error("LLM request failed model=%s error=%s", CHAT_MODEL, exc)
                     break
 
                 msg = response.message
+                llm_duration_ms = int((time.perf_counter() - llm_start) * 1000)
+                logger.info(
+                    "LLM request completed model=%s duration_ms=%d content_length=%d tool_call_count=%d",
+                    CHAT_MODEL,
+                    llm_duration_ms,
+                    len(msg.content or ""),
+                    len(msg.tool_calls or []),
+                )
 
                 if not msg.tool_calls:
                     console.print("[bold green]Agent:[/bold green]")
@@ -330,10 +405,47 @@ async def run_agent(
                     turn += 1
                     break
 
+                serializable_tool_calls: list[dict] = []
+                executable_calls: list[tuple[str, dict, str, bool]] = []
+                for idx, tc in enumerate(msg.tool_calls, start=1):
+                    name = _tool_call_name(tc)
+                    if not name:
+                        logger.warning(
+                            "Skipping malformed tool call with missing function name index=%d", idx
+                        )
+                        continue
+
+                    raw_args = _tool_call_arguments(tc)
+                    args, args_valid = _normalize_tool_args(raw_args)
+                    tool_call_id = _tool_call_id(tc, idx)
+                    serializable_tool_calls.append(
+                        {
+                            "id": tool_call_id,
+                            "type": "function",
+                            "function": {"name": name, "arguments": args},
+                        }
+                    )
+                    executable_calls.append((name, args, tool_call_id, args_valid))
+
+                if not executable_calls:
+                    fallback_content = (
+                        msg.content or "No executable tool calls were provided by the model."
+                    )
+                    logger.warning(
+                        "Assistant returned non-executable tool calls; continuing with fallback response."
+                    )
+                    console.print("[bold green]Agent:[/bold green]")
+                    console.print(Markdown(fallback_content))
+                    assistant_message = {"role": "assistant", "content": fallback_content}
+                    history.append(assistant_message)
+                    _persist_message(session_id, turn, assistant_message)
+                    turn += 1
+                    break
+
                 tool_call_message = {
                     "role": "assistant",
                     "content": msg.content or "",
-                    "tool_calls": msg.tool_calls,
+                    "tool_calls": serializable_tool_calls,
                 }
                 history.append(tool_call_message)
                 _persist_message(
@@ -348,22 +460,33 @@ async def run_agent(
                         "tool_calls_json": json.dumps(
                             [
                                 {
-                                    "name": call.function.name,
-                                    "arguments": call.function.arguments,
+                                    "id": call["id"],
+                                    "name": call["function"]["name"],
+                                    "arguments": call["function"]["arguments"],
                                 }
-                                for call in msg.tool_calls
+                                for call in serializable_tool_calls
                             ]
                         ),
                     },
                 )
                 turn += 1
 
-                for tc in msg.tool_calls:
-                    name = tc.function.name
-                    args = _normalize_tool_args(tc.function.arguments)
+                for name, args, tool_call_id, args_valid in executable_calls:
+                    if not args_valid:
+                        logger.warning(
+                            "Tool call arguments were not valid JSON object; using empty arguments "
+                            "name=%s tool_call_id=%s",
+                            name,
+                            tool_call_id,
+                        )
 
                     console.print(f"[dim] > {name}({args})[/dim]")
-                    logger.info("Tool call started name=%s args_keys=%s", name, sorted(args.keys()))
+                    logger.info(
+                        "Tool call started name=%s tool_call_id=%s args_keys=%s",
+                        name,
+                        tool_call_id,
+                        sorted(args.keys()),
+                    )
 
                     start = time.perf_counter()
                     try:
@@ -371,16 +494,18 @@ async def run_agent(
                         duration_ms = int((time.perf_counter() - start) * 1000)
                         result_text = _tool_result_text(result)
                         logger.info(
-                            "Tool call succeeded name=%s duration_ms=%d result_length=%d",
+                            "Tool call succeeded name=%s tool_call_id=%s duration_ms=%d result_length=%d",
                             name,
+                            tool_call_id,
                             duration_ms,
                             len(result_text),
                         )
                     except Exception as exc:  # pragma: no cover - transport/tool failure path
                         duration_ms = int((time.perf_counter() - start) * 1000)
                         logger.error(
-                            "Tool call failed name=%s duration_ms=%d error=%s",
+                            "Tool call failed name=%s tool_call_id=%s duration_ms=%d error=%s",
                             name,
+                            tool_call_id,
                             duration_ms,
                             exc,
                         )
