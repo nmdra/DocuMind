@@ -36,6 +36,8 @@ mcp = FastMCP("chromadb-tools")
 ollama = ollama_client.Client(host=OLLAMA_BASE_URL)
 logger = logging.getLogger(__name__)
 URL_PATTERN = re.compile(r"https?://[^\s)>\]\"']+")
+MAX_URLS_PER_RESULT = 3
+TRAILING_URL_PUNCTUATION = ".,;:!?"
 
 
 def _configure_logging(level_name: str, to_client_debug: bool) -> None:
@@ -74,9 +76,13 @@ def _as_metadata(meta: Any) -> Mapping[str, Any]:
 
 
 def _extract_urls(text: str) -> list[str]:
-    urls = URL_PATTERN.findall(text)
+    urls = [
+        match.rstrip(TRAILING_URL_PUNCTUATION)
+        for match in URL_PATTERN.findall(text)
+        if match.rstrip(TRAILING_URL_PUNCTUATION)
+    ]
     unique_urls = list(dict.fromkeys(urls))
-    return unique_urls[:3]
+    return unique_urls[:MAX_URLS_PER_RESULT]
 
 
 @mcp.tool()
