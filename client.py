@@ -237,13 +237,13 @@ async def run_agent(
         parts = shlex.split(server_command)
         if not parts:
             raise ValueError("Server command cannot be empty.")
-        connection = server_command
+        server_connection = server_command
     elif transport == "sse":
-        connection = sse_url
+        server_connection = sse_url
     else:
         raise ValueError(f"Unsupported transport: {transport!r}. Expected one of: 'stdio', 'sse'.")
 
-    async with Client(connection, log_handler=_server_log_handler) as session:
+    async with Client(server_connection, log_handler=_server_log_handler) as session:
         try:
             tool_resp = await session.list_tools()
             raw_tools = getattr(tool_resp, "tools", tool_resp)
