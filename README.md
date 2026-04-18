@@ -53,8 +53,8 @@ python3 -m uv sync
 v1 ingestion supports text/markdown files only (`.txt`, `.md`, `.markdown`).
 
 ```bash
-python3 -m uv run python ingest.py data/my_notes.txt
-python3 -m uv run python ingest.py data/notes.txt data/report.md
+uv run python ingest.py data/my_notes.txt
+uv run python ingest.py data/notes.txt data/report.md
 ```
 
 ## Run the server (stdio + SSE)
@@ -69,14 +69,14 @@ Run FastMCP server over stdio (default):
 
 ```bash
 cd <project-root>
-python3 -m uv run python server.py --transport stdio
+uv run python server.py --transport stdio
 ```
 
 Run FastMCP server over SSE:
 
 ```bash
 cd <project-root>
-python3 -m uv run python server.py --transport sse --host 127.0.0.1 --port 8000
+uv run python server.py --transport sse --host 127.0.0.1 --port 8000
 ```
 
 ## Run the interactive client
@@ -87,21 +87,21 @@ Launch interactive client with default session id:
 
 ```bash
 cd <project-root>
-python3 -m uv run python client.py
+uv run python client.py
 ```
 
 Launch with a custom persisted session:
 
 ```bash
 cd <project-root>
-python3 -m uv run python client.py --session-id my-session
+uv run python client.py --session-id my-session
 ```
 
 Override the server launch command used by the client:
 
 ```bash
 cd <project-root>
-python3 -m uv run python client.py --server-command "python3 -m uv run server.py --transport stdio"
+uv run python client.py --server-command "uv run python server.py --transport stdio"
 ```
 
 ## FastMCP tools (MVP)
@@ -134,7 +134,7 @@ Verify collection count:
 
 ```bash
 cd <project-root>
-python3 -m uv run python -c "import chromadb; c=chromadb.PersistentClient('./chroma_db'); print(c.get_or_create_collection('documents').count())"
+uv run python -c "import chromadb; c=chromadb.PersistentClient('./chroma_db'); print(c.get_or_create_collection('documents').count())"
 ```
 
 ## Troubleshooting

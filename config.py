@@ -22,4 +22,4 @@ DEFAULT_TRANSPORT = "stdio"
 SSE_HOST = "127.0.0.1"
 SSE_PORT = 8000
 
-DEFAULT_SERVER_COMMAND = "python3 -m uv run server.py --transport stdio"
+DEFAULT_SERVER_COMMAND = "uv run python server.py --transport stdio"
