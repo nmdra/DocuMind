@@ -101,7 +101,7 @@ def semantic_search(query: str, n_results: int = TOP_K, source_filter: str = "")
         return "No results found."
 
     lines: list[str] = []
-    for i, (doc, dist, meta) in enumerate(zip(docs, dists, metas, strict=False), start=1):
+    for i, (doc, dist, meta) in enumerate(zip(docs, dists, metas, strict=True), start=1):
         metadata = _as_metadata(meta)
         score = 1.0 - dist if isinstance(dist, (float, int)) else 0.0
         lines.append(f"[{i}] score={score:.3f} source={metadata.get('source', '')}")
