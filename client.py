@@ -57,7 +57,7 @@ async def _server_log_handler(message: fastmcp_logging.LogMessage) -> None:
         msg = str(data) if data else repr(message)
     if isinstance(message.level, str):
         level = LOGGING_LEVEL_MAP.get(message.level.upper(), logging.INFO)
-    elif isinstance(message.level, int):
+    elif isinstance(message.level, int) and 0 <= message.level <= logging.CRITICAL:
         level = message.level
     else:
         level = logging.INFO
@@ -102,9 +102,11 @@ def _tool_result_text(result: object) -> str:
     content = getattr(result, "content", None)
     if not isinstance(content, list) and isinstance(result, Mapping):
         content = result.get("content")
-    if not isinstance(content, list) or not content:
+    if not isinstance(content, list):
         return ""
-    first = content[0]
+    first = next(iter(content), None)
+    if first is None:
+        return ""
     text = getattr(first, "text", None)
     if isinstance(text, str):
         return text
