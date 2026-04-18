@@ -51,7 +51,8 @@ STRICT_RAG_SYSTEM_PROMPT = (
 )
 SOURCE_CITATION_PATTERN = re.compile(r"\[Source:\s*([^\]]+)\]")
 SOURCE_LINE_PATTERN = re.compile(r"source=(.+?)\s*$")
-SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])|\n+")
+SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+|\n+")
+NO_RESULTS_PREFIX = "no results found"
 
 
 def _configure_logging(level_name: str) -> None:
@@ -117,11 +118,7 @@ def _has_sentence_level_citations(content: str) -> bool:
     stripped = content.strip()
     if not stripped:
         return False
-    sentences: list[str] = []
-    for part in SENTENCE_SPLIT_PATTERN.split(stripped):
-        sentence = part.strip()
-        if sentence:
-            sentences.append(sentence)
+    sentences = [sentence.strip() for sentence in SENTENCE_SPLIT_PATTERN.split(stripped) if sentence.strip()]
     if not sentences:
         return False
     return all(SOURCE_CITATION_PATTERN.search(sentence) for sentence in sentences)
@@ -152,7 +149,9 @@ def _context_block(context_text: str) -> str:
 
 def _is_no_results_context(context_text: str) -> bool:
     normalized = context_text.strip().lower()
-    return normalized.startswith("no results found")
+    if not normalized:
+        return True
+    return normalized.startswith(NO_RESULTS_PREFIX)
 
 
 def _embed(text: str) -> list[float]:
@@ -357,7 +356,7 @@ async def run_agent(
                     {"query": user_input, "n_results": TOP_K},
                 )
                 context_text = _tool_result_text(context_result)
-                if not context_text or _is_no_results_context(context_text):
+                if _is_no_results_context(context_text):
                     assistant_text = STRICT_RAG_FALLBACK
                 else:
                     allowed_sources = _extract_sources_from_context(context_text)
