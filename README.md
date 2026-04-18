@@ -112,6 +112,10 @@ uv run python server.py --transport sse --host 127.0.0.1 --port 8000
 ## Run the interactive client
 
 Client persists conversation history in Chroma (`conversation_memory` collection) and supports stdio and SSE transports.
+Responses are enforced in strict closed-domain mode:
+- The assistant answers only from retrieved document context.
+- If context is insufficient, it returns exactly: `I cannot answer this based on the provided documents.`
+- Non-refusal answers must include sentence-level citations in the format `[Source: <source>]`.
 
 Launch interactive client with default session id (stdio):
 

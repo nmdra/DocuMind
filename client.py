@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
+import re
 import shlex
-import time
 from collections.abc import Mapping
 
 import chromadb
@@ -27,6 +26,7 @@ from config import (
     OLLAMA_BASE_URL,
     SSE_HOST,
     SSE_PORT,
+    TOP_K,
 )
 
 console = Console()
@@ -39,6 +39,18 @@ conversation_col = chroma.get_or_create_collection(
 )
 EMPTY_MESSAGE_SENTINEL = "__EMPTY_MESSAGE__"
 LOGGING_LEVEL_MAP = logging.getLevelNamesMapping()
+STRICT_RAG_FALLBACK = "I cannot answer this based on the provided documents."
+STRICT_RAG_SYSTEM_PROMPT = (
+    "You are a strict, factual assistant. You will be provided with context from specific documents.\n\n"
+    "Your rules:\n"
+    "1. You must answer the user's question ONLY using the information provided in the context blocks.\n"
+    "2. Do not use your pre-trained knowledge or outside information.\n"
+    f"3. If the context does not contain the answer, output exactly: '{STRICT_RAG_FALLBACK}'\n"
+    "4. If you can answer, every sentence must include a citation in the form [Source: <source>].\n"
+    "5. Cite only sources that appear in the provided context blocks."
+)
+SOURCE_CITATION_PATTERN = re.compile(r"\[Source:\s*([^\]]+)\]")
+SENTENCE_PATTERN = re.compile(r"[^.!?\n]+[.!?]?")
 
 
 def _configure_logging(level_name: str) -> None:
@@ -64,39 +76,6 @@ async def _server_log_handler(message: fastmcp_logging.LogMessage) -> None:
     logger.log(level, "[mcp:%s] %s", message.logger or "server", msg)
 
 
-def _tool_defs(tools) -> list[dict]:
-    """Convert MCP tools into Ollama function-tool definitions."""
-    defs: list[dict] = []
-    for t in tools:
-        name = getattr(t, "name", None)
-        if not isinstance(name, str) and isinstance(t, Mapping):
-            name = t.get("name")
-        if not isinstance(name, str) or not name:
-            continue
-
-        description = getattr(t, "description", "")
-        if not isinstance(description, str) and isinstance(t, Mapping):
-            description = t.get("description", "")
-
-        schema = getattr(t, "inputSchema", None)
-        if schema is None and isinstance(t, Mapping):
-            schema = t.get("inputSchema") or t.get("input_schema")
-        if not isinstance(schema, Mapping):
-            schema = {"type": "object", "properties": {}}
-
-        defs.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": description,
-                    "parameters": schema,
-                },
-            }
-        )
-    return defs
-
-
 def _tool_result_text(result: object) -> str:
     """Extract text content from a tool result object or dict payload."""
     content = getattr(result, "content", None)
@@ -117,17 +96,45 @@ def _tool_result_text(result: object) -> str:
     return str(first)
 
 
-def _normalize_tool_args(args: object) -> dict:
-    if isinstance(args, str):
-        try:
-            args = json.loads(args)
-        except json.JSONDecodeError:
-            return {}
+def _extract_sources_from_context(context_text: str) -> set[str]:
+    sources: set[str] = set()
+    for line in context_text.splitlines():
+        if "source=" not in line:
+            continue
+        source = line.split("source=", maxsplit=1)[1].strip()
+        if source:
+            sources.add(source)
+    return sources
 
-    if isinstance(args, dict):
-        return args
 
-    return {}
+def _is_refusal(content: str) -> bool:
+    return content.strip() == STRICT_RAG_FALLBACK
+
+
+def _has_sentence_level_citations(content: str) -> bool:
+    sentences = [s.strip() for s in SENTENCE_PATTERN.findall(content) if s.strip()]
+    if not sentences:
+        return False
+    return all(SOURCE_CITATION_PATTERN.search(sentence) for sentence in sentences)
+
+
+def _citations_match_sources(content: str, allowed_sources: set[str]) -> bool:
+    if not allowed_sources:
+        return False
+    cited_sources = {match.strip() for match in SOURCE_CITATION_PATTERN.findall(content) if match.strip()}
+    if not cited_sources:
+        return False
+    return cited_sources.issubset(allowed_sources)
+
+
+def _answer_is_valid(content: str, allowed_sources: set[str]) -> bool:
+    if _is_refusal(content):
+        return True
+    return _has_sentence_level_citations(content) and _citations_match_sources(content, allowed_sources)
+
+
+def _context_block(context_text: str) -> str:
+    return f"Context blocks:\n{context_text}"
 
 
 def _embed(text: str) -> list[float]:
@@ -254,13 +261,21 @@ async def run_agent(
         try:
             tool_resp = await session.list_tools()
             raw_tools = getattr(tool_resp, "tools", tool_resp)
-            tools = _tool_defs(raw_tools if isinstance(raw_tools, list) else [])
+            tool_names = {
+                (getattr(t, "name", None) if not isinstance(t, Mapping) else t.get("name"))
+                for t in (raw_tools if isinstance(raw_tools, list) else [])
+            }
         except Exception:  # pragma: no cover - transport/tool-list failure path
             logger.exception("Failed to list server tools. Agent will continue without server tools.")
             console.print(
                 "[bold yellow]Warning:[/bold yellow] Failed to list MCP tools; continuing without tool access."
             )
-            tools = []
+            tool_names = set()
+        has_semantic_search = "semantic_search" in tool_names
+        if not has_semantic_search:
+            console.print(
+                "[bold yellow]Warning:[/bold yellow] semantic_search tool is unavailable; responses will fallback."
+            )
 
         console.print("[bold green]FastMCP + ChromaDB agent ready.[/bold green]")
         console.print(f"[dim]{CHAT_MODEL} | {EMBED_MODEL}[/dim]")
@@ -312,84 +327,39 @@ async def run_agent(
             _persist_message(session_id, turn, user_message)
             turn += 1
 
-            while True:
-                try:
-                    response = ollama_client.chat(model=CHAT_MODEL, messages=history, tools=tools)
-                except Exception as exc:  # pragma: no cover - network/service failure path
-                    console.print(f"[bold red]Ollama request failed:[/bold red] {exc}")
-                    break
-
-                msg = response.message
-
-                if not msg.tool_calls:
-                    console.print("[bold green]Agent:[/bold green]")
-                    console.print(Markdown(msg.content or ""))
-                    assistant_message = {"role": "assistant", "content": msg.content or ""}
-                    history.append(assistant_message)
-                    _persist_message(session_id, turn, assistant_message)
-                    turn += 1
-                    break
-
-                tool_call_message = {
-                    "role": "assistant",
-                    "content": msg.content or "",
-                    "tool_calls": msg.tool_calls,
-                }
-                history.append(tool_call_message)
-                _persist_message(
-                    session_id,
-                    turn,
-                    {
-                        "role": "assistant",
-                        "content": msg.content or "",
-                    },
-                    extra_metadata={
-                        "event": "tool_calls",
-                        "tool_calls_json": json.dumps(
-                            [
-                                {
-                                    "name": call.function.name,
-                                    "arguments": call.function.arguments,
-                                }
-                                for call in msg.tool_calls
-                            ]
-                        ),
-                    },
+            if not has_semantic_search:
+                assistant_text = STRICT_RAG_FALLBACK
+            else:
+                context_result = await session.call_tool(
+                    "semantic_search",
+                    {"query": user_input, "n_results": TOP_K},
                 )
-                turn += 1
-
-                for tc in msg.tool_calls:
-                    name = tc.function.name
-                    args = _normalize_tool_args(tc.function.arguments)
-
-                    console.print(f"[dim] > {name}({args})[/dim]")
-                    logger.info("Tool call started name=%s args_keys=%s", name, sorted(args.keys()))
-
-                    start = time.perf_counter()
+                context_text = _tool_result_text(context_result)
+                if not context_text or context_text.strip() == "No results found.":
+                    assistant_text = STRICT_RAG_FALLBACK
+                else:
+                    allowed_sources = _extract_sources_from_context(context_text)
+                    request_messages = [
+                        {"role": "system", "content": STRICT_RAG_SYSTEM_PROMPT},
+                        *history,
+                        {"role": "system", "content": _context_block(context_text)},
+                    ]
                     try:
-                        result = await session.call_tool(name, args)
-                        duration_ms = int((time.perf_counter() - start) * 1000)
-                        result_text = _tool_result_text(result)
-                        logger.info(
-                            "Tool call succeeded name=%s duration_ms=%d result_length=%d",
-                            name,
-                            duration_ms,
-                            len(result_text),
-                        )
-                    except Exception as exc:  # pragma: no cover - transport/tool failure path
-                        duration_ms = int((time.perf_counter() - start) * 1000)
-                        logger.error(
-                            "Tool call failed name=%s duration_ms=%d error=%s",
-                            name,
-                            duration_ms,
-                            exc,
-                        )
-                        result_text = f"Tool call failed: {exc}"
+                        response = ollama_client.chat(model=CHAT_MODEL, messages=request_messages)
+                    except Exception as exc:  # pragma: no cover - network/service failure path
+                        console.print(f"[bold red]Ollama request failed:[/bold red] {exc}")
+                        continue
+                    content = response.message.content or ""
+                    assistant_text = (
+                        content if _answer_is_valid(content, allowed_sources) else STRICT_RAG_FALLBACK
+                    )
 
-                    tool_message = {"role": "tool", "content": result_text, "name": name}
-                    history.append(tool_message)
-                    _persist_message(session_id, turn, tool_message)
-                    turn += 1
+            console.print("[bold green]Agent:[/bold green]")
+            console.print(Markdown(assistant_text))
+            assistant_message = {"role": "assistant", "content": assistant_text}
+            history.append(assistant_message)
+            _persist_message(session_id, turn, assistant_message)
+            turn += 1
 
 
 if __name__ == "__main__":
