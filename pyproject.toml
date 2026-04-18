@@ -1,0 +1,29 @@
+[project]
+name = "mcp-chroma-agent"
+version = "0.1.0"
+description = "Local RAG agent: FastMCP + ChromaDB + phi4-mini + embeddinggemma"
+requires-python = ">=3.13"
+dependencies = [
+    "chromadb>=1.5.8",
+    "fastmcp>=3.2.4",
+    "httpx>=0.28.1",
+    "ollama>=0.6.1",
+    "rich>=15.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.11",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
