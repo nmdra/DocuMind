@@ -53,8 +53,8 @@ async def _server_log_handler(message: fastmcp_logging.LogMessage) -> None:
     """Handle MCP server log messages by forwarding them to Python logging."""
     data = message.data if isinstance(message.data, Mapping) else {}
     msg = data.get("msg")
-    if not isinstance(msg, str):
-        msg = str(msg or "")
+    if not isinstance(msg, str) or not msg:
+        msg = str(data) if data else repr(message)
     level = LOGGING_LEVEL_MAP.get(str(message.level).upper(), logging.INFO)
     logger.log(level, "[mcp:%s] %s", message.logger or "server", msg)
 
