@@ -13,7 +13,7 @@ No cloud APIs are required.
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.13+
 - [Ollama](https://ollama.com/) installed and running
 - [UV](https://docs.astral.sh/uv/) installed
 
