@@ -117,7 +117,11 @@ def _has_sentence_level_citations(content: str) -> bool:
     stripped = content.strip()
     if not stripped:
         return False
-    sentences = [s.strip() for s in SENTENCE_SPLIT_PATTERN.split(stripped) if s.strip()]
+    sentences: list[str] = []
+    for part in SENTENCE_SPLIT_PATTERN.split(stripped):
+        sentence = part.strip()
+        if sentence:
+            sentences.append(sentence)
     if not sentences:
         return False
     return all(SOURCE_CITATION_PATTERN.search(sentence) for sentence in sentences)
@@ -126,7 +130,11 @@ def _has_sentence_level_citations(content: str) -> bool:
 def _citations_match_sources(content: str, allowed_sources: set[str]) -> bool:
     if not allowed_sources:
         return False
-    cited_sources = {match.strip() for match in SOURCE_CITATION_PATTERN.findall(content) if match.strip()}
+    cited_sources: set[str] = set()
+    for match in SOURCE_CITATION_PATTERN.findall(content):
+        source = match.strip()
+        if source:
+            cited_sources.add(source)
     if not cited_sources:
         return False
     return cited_sources.issubset(allowed_sources)
