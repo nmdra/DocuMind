@@ -55,7 +55,12 @@ async def _server_log_handler(message: fastmcp_logging.LogMessage) -> None:
     msg = data.get("msg")
     if not isinstance(msg, str) or not msg:
         msg = str(data) if data else repr(message)
-    level = LOGGING_LEVEL_MAP.get(str(message.level).upper(), logging.INFO)
+    if isinstance(message.level, str):
+        level = LOGGING_LEVEL_MAP.get(message.level.upper(), logging.INFO)
+    elif isinstance(message.level, int):
+        level = message.level
+    else:
+        level = logging.INFO
     logger.log(level, "[mcp:%s] %s", message.logger or "server", msg)
 
 
@@ -249,7 +254,10 @@ async def run_agent(
             raw_tools = getattr(tool_resp, "tools", tool_resp)
             tools = _tool_defs(raw_tools if isinstance(raw_tools, list) else [])
         except Exception as exc:  # pragma: no cover - transport/tool-list failure path
-            logger.warning("Failed to list server tools: %s", exc)
+            logger.warning(
+                "Failed to list server tools: %s. Agent will continue without server tools.",
+                exc,
+            )
             tools = []
 
         console.print("[bold green]FastMCP + ChromaDB agent ready.[/bold green]")
