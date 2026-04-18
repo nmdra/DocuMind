@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import uuid
 from collections.abc import Mapping
 from typing import Any
@@ -11,9 +12,12 @@ from fastmcp import FastMCP
 from config import (
     CHROMA_PATH,
     COLLECTION_NAME,
+    DEFAULT_TRANSPORT,
     EMBED_MODEL,
     MAX_RESULT_PREVIEW_LENGTH,
     OLLAMA_BASE_URL,
+    SSE_HOST,
+    SSE_PORT,
     TOP_K,
 )
 
@@ -129,5 +133,22 @@ def collection_stats() -> str:
     return f"Collection '{COLLECTION_NAME}': {count} document chunk(s) stored."
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run FastMCP Chroma tools server.")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse"],
+        default=DEFAULT_TRANSPORT,
+        help="Transport mode to run the server with.",
+    )
+    parser.add_argument("--host", default=SSE_HOST, help="Host for SSE transport.")
+    parser.add_argument("--port", type=int, default=SSE_PORT, help="Port for SSE transport.")
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    mcp.run()
+    args = parse_args()
+    if args.transport == "sse":
+        mcp.run(transport="sse", host=args.host, port=args.port)
+    else:
+        mcp.run(transport="stdio")

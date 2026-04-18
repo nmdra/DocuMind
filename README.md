@@ -36,6 +36,7 @@ ollama list
 ├── server.py
 ├── client.py
 ├── ingest.py
+├── scripts/
 ├── data/
 └── chroma_db/   # runtime-created, ignored by git
 ```
@@ -49,12 +50,14 @@ python3 -m uv sync
 
 ## Ingest documents
 
+v1 ingestion supports text/markdown files only (`.txt`, `.md`, `.markdown`).
+
 ```bash
 python3 -m uv run python ingest.py data/my_notes.txt
 python3 -m uv run python ingest.py data/notes.txt data/report.md
 ```
 
-## Run the agent
+## Run the server (stdio + SSE)
 
 Start Ollama if needed:
 
@@ -62,11 +65,36 @@ Start Ollama if needed:
 ollama serve
 ```
 
-Launch interactive client:
+Run FastMCP server over stdio (default):
+
+```bash
+cd <project-root>
+python3 -m uv run python server.py --transport stdio
+```
+
+Run FastMCP server over SSE:
+
+```bash
+cd <project-root>
+python3 -m uv run python server.py --transport sse --host 127.0.0.1 --port 8000
+```
+
+## Run the interactive client
+
+Client uses stdio transport and persists conversation history in Chroma (`conversation_memory` collection).
+
+Launch interactive client with default session id:
 
 ```bash
 cd <project-root>
 python3 -m uv run python client.py
+```
+
+Launch with a custom persisted session:
+
+```bash
+cd <project-root>
+python3 -m uv run python client.py --session-id my-session
 ```
 
 ## FastMCP tools (MVP)
@@ -75,12 +103,21 @@ python3 -m uv run python client.py
 - `semantic_search(query, n_results=5, source_filter="")`
 - `collection_stats()`
 
-## Ruff workflow
+## Testing (scripts + Ruff only)
+
+Run script-based checks:
+
+```bash
+cd <project-root>
+./scripts/ruff_check.sh
+./scripts/smoke_ingest.sh
+```
+
+Direct Ruff commands:
 
 ```bash
 cd <project-root>
 python3 -m uv run ruff format .
-python3 -m uv run ruff check --fix .
 python3 -m uv run ruff format --check . && python3 -m uv run ruff check .
 ```
 

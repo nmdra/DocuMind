@@ -13,6 +13,7 @@ from config import (
     COLLECTION_NAME,
     EMBED_MODEL,
     OLLAMA_BASE_URL,
+    SUPPORTED_INGEST_EXTENSIONS,
 )
 
 chroma = chromadb.PersistentClient(path=CHROMA_PATH)
@@ -66,6 +67,9 @@ def ingest_file(path: Path) -> None:
     """Ingest a single UTF-8 file into ChromaDB."""
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(f"File not found: {path}")
+    if path.suffix.lower() not in SUPPORTED_INGEST_EXTENSIONS:
+        supported = ", ".join(SUPPORTED_INGEST_EXTENSIONS)
+        raise ValueError(f"Unsupported file type for v1 ingestion: {path.suffix!r}. Use: {supported}")
 
     text = path.read_text(encoding="utf-8")
     chunks = chunk_text(text)
@@ -84,9 +88,9 @@ def ingest_file(path: Path) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Ingest text files into the local ChromaDB collection."
+        description="Ingest text/markdown files into the local ChromaDB collection."
     )
-    parser.add_argument("files", nargs="+", help="One or more files to ingest")
+    parser.add_argument("files", nargs="+", help="One or more .txt/.md/.markdown files to ingest")
     return parser.parse_args()
 
 

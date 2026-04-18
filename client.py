@@ -1,18 +1,32 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
 import json
 
+import chromadb
 import ollama
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from rich.console import Console
 from rich.markdown import Markdown
 
-from config import CHAT_MODEL, EMBED_MODEL, OLLAMA_BASE_URL
+from config import (
+    CHAT_MODEL,
+    CHROMA_PATH,
+    CONVERSATION_COLLECTION_NAME,
+    DEFAULT_CONVERSATION_SESSION_ID,
+    EMBED_MODEL,
+    OLLAMA_BASE_URL,
+)
 
 console = Console()
 ollama_client = ollama.Client(host=OLLAMA_BASE_URL)
+chroma = chromadb.PersistentClient(path=CHROMA_PATH)
+conversation_col = chroma.get_or_create_collection(
+    name=CONVERSATION_COLLECTION_NAME,
+    metadata={"hnsw:space": "cosine"},
+)
 
 
 def _tool_defs(tools) -> list[dict]:
@@ -43,7 +57,74 @@ def _normalize_tool_args(args: object) -> dict:
     return {}
 
 
-async def run_agent() -> None:
+def _embed(text: str) -> list[float]:
+    resp = ollama_client.embed(model=EMBED_MODEL, input=text)
+    embeddings = resp.get("embeddings")
+    embedding = embeddings[0] if isinstance(embeddings, list) and embeddings else None
+    if not isinstance(embedding, list):
+        raise RuntimeError("Embedding response from Ollama was malformed.")
+    return embedding
+
+
+def _load_history(session_id: str) -> list[dict]:
+    results = conversation_col.get(where={"session_id": session_id}, include=["documents", "metadatas"])
+    docs = results.get("documents") or []
+    metas = results.get("metadatas") or []
+
+    items: list[tuple[int, dict]] = []
+    for doc, meta in zip(docs, metas, strict=True):
+        if not isinstance(meta, dict):
+            continue
+        role = meta.get("role")
+        turn = meta.get("turn")
+        if not isinstance(role, str) or not isinstance(turn, int):
+            continue
+
+        msg: dict[str, str] = {"role": role, "content": doc or ""}
+        name = meta.get("name")
+        if isinstance(name, str) and name:
+            msg["name"] = name
+
+        items.append((turn, msg))
+
+    items.sort(key=lambda item: item[0])
+    return [msg for _, msg in items]
+
+
+def _persist_message(session_id: str, turn: int, message: dict) -> None:
+    role = message.get("role", "")
+    content = message.get("content", "")
+    if not isinstance(role, str) or not isinstance(content, str):
+        return
+
+    metadata: dict[str, int | str] = {
+        "session_id": session_id,
+        "turn": turn,
+        "role": role,
+    }
+    name = message.get("name")
+    if isinstance(name, str) and name:
+        metadata["name"] = name
+
+    conversation_col.upsert(
+        ids=[f"{session_id}-{turn:08d}"],
+        embeddings=[_embed(content or f"[{role}]")],
+        documents=[content],
+        metadatas=[metadata],
+    )
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Interactive client for the local FastMCP server.")
+    parser.add_argument(
+        "--session-id",
+        default=DEFAULT_CONVERSATION_SESSION_ID,
+        help="Conversation session ID for persisted memory.",
+    )
+    return parser.parse_args()
+
+
+async def run_agent(session_id: str) -> None:
     params = StdioServerParameters(
         command="python3", args=["-m", "uv", "run", "python", "server.py"]
     )
@@ -58,15 +139,23 @@ async def run_agent() -> None:
 
         console.print("[bold green]FastMCP + ChromaDB agent ready.[/bold green]")
         console.print(f"[dim]{CHAT_MODEL} | {EMBED_MODEL}[/dim]")
+        console.print(f"[dim]Session: {session_id}[/dim]")
         console.print("[dim]Type 'quit' to exit.[/dim]")
 
-        history: list[dict] = []
+        history = _load_history(session_id)
+        turn = len(history)
+        if history:
+            console.print(f"[dim]Loaded {len(history)} persisted message(s).[/dim]")
+
         while True:
             user_input = console.input("[bold cyan]You:[/bold cyan] ").strip()
             if user_input.lower() in {"quit", "exit", "q"}:
                 break
 
-            history.append({"role": "user", "content": user_input})
+            user_message = {"role": "user", "content": user_input}
+            history.append(user_message)
+            _persist_message(session_id, turn, user_message)
+            turn += 1
 
             while True:
                 try:
@@ -80,16 +169,28 @@ async def run_agent() -> None:
                 if not msg.tool_calls:
                     console.print("[bold green]Agent:[/bold green]")
                     console.print(Markdown(msg.content or ""))
-                    history.append({"role": "assistant", "content": msg.content or ""})
+                    assistant_message = {"role": "assistant", "content": msg.content or ""}
+                    history.append(assistant_message)
+                    _persist_message(session_id, turn, assistant_message)
+                    turn += 1
                     break
 
-                history.append(
+                tool_call_message = {
+                    "role": "assistant",
+                    "content": msg.content or "",
+                    "tool_calls": msg.tool_calls,
+                }
+                history.append(tool_call_message)
+                _persist_message(
+                    session_id,
+                    turn,
                     {
                         "role": "assistant",
                         "content": msg.content or "",
-                        "tool_calls": msg.tool_calls,
+                        "name": "tool_calls",
                     }
                 )
+                turn += 1
 
                 for tc in msg.tool_calls:
                     name = tc.function.name
@@ -103,8 +204,12 @@ async def run_agent() -> None:
                     except Exception as exc:  # pragma: no cover - transport/tool failure path
                         result_text = f"Tool call failed: {exc}"
 
-                    history.append({"role": "tool", "content": result_text, "name": name})
+                    tool_message = {"role": "tool", "content": result_text, "name": name}
+                    history.append(tool_message)
+                    _persist_message(session_id, turn, tool_message)
+                    turn += 1
 
 
 if __name__ == "__main__":
-    asyncio.run(run_agent())
+    args = parse_args()
+    asyncio.run(run_agent(args.session_id))
