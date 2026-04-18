@@ -69,7 +69,7 @@ def ingest_file(path: Path) -> None:
         raise FileNotFoundError(f"File not found: {path}")
     if path.suffix.lower() not in SUPPORTED_INGEST_EXTENSIONS:
         supported = ", ".join(SUPPORTED_INGEST_EXTENSIONS)
-        raise ValueError(f"Unsupported file type for v1 ingestion: {path.suffix!r}. Use: {supported}")
+        raise ValueError(f"Unsupported file type: {path.suffix!r}. Use: {supported}")
 
     text = path.read_text(encoding="utf-8")
     chunks = chunk_text(text)

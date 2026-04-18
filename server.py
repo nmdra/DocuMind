@@ -139,7 +139,7 @@ def parse_args() -> argparse.Namespace:
         "--transport",
         choices=["stdio", "sse"],
         default=DEFAULT_TRANSPORT,
-        help="Transport mode to run the server with.",
+        help="Transport mode to run the server with (default: stdio).",
     )
     parser.add_argument("--host", default=SSE_HOST, help="Host for SSE transport.")
     parser.add_argument("--port", type=int, default=SSE_PORT, help="Port for SSE transport.")

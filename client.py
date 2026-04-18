@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import argparse
 import json
+import shlex
 
 import chromadb
 import ollama
@@ -15,6 +16,7 @@ from config import (
     CHAT_MODEL,
     CHROMA_PATH,
     CONVERSATION_COLLECTION_NAME,
+    DEFAULT_SERVER_COMMAND,
     DEFAULT_CONVERSATION_SESSION_ID,
     EMBED_MODEL,
     OLLAMA_BASE_URL,
@@ -121,13 +123,20 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_CONVERSATION_SESSION_ID,
         help="Conversation session ID for persisted memory.",
     )
+    parser.add_argument(
+        "--server-command",
+        default=DEFAULT_SERVER_COMMAND,
+        help="Command used to start the MCP server subprocess.",
+    )
     return parser.parse_args()
 
 
-async def run_agent(session_id: str) -> None:
-    params = StdioServerParameters(
-        command="python3", args=["-m", "uv", "run", "python", "server.py"]
-    )
+async def run_agent(session_id: str, server_command: str) -> None:
+    parts = shlex.split(server_command)
+    if not parts:
+        raise ValueError("Server command cannot be empty.")
+
+    params = StdioServerParameters(command=parts[0], args=parts[1:])
 
     async with (
         stdio_client(params) as (read, write),
@@ -212,4 +221,4 @@ async def run_agent(session_id: str) -> None:
 
 if __name__ == "__main__":
     args = parse_args()
-    asyncio.run(run_agent(args.session_id))
+    asyncio.run(run_agent(args.session_id, args.server_command))

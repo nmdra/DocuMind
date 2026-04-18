@@ -97,6 +97,13 @@ cd <project-root>
 python3 -m uv run python client.py --session-id my-session
 ```
 
+Override the server launch command used by the client:
+
+```bash
+cd <project-root>
+python3 -m uv run python client.py --server-command "python3 -m uv run python server.py --transport stdio"
+```
+
 ## FastMCP tools (MVP)
 
 - `add_document(text, doc_id=None, source="")`
