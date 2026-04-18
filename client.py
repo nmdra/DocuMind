@@ -50,6 +50,7 @@ def _configure_logging(level_name: str) -> None:
 
 
 async def _server_log_handler(message: fastmcp_logging.LogMessage) -> None:
+    """Handle MCP server log messages by forwarding them to Python logging."""
     data = message.data if isinstance(message.data, Mapping) else {}
     msg = data.get("msg")
     if not isinstance(msg, str):
@@ -92,6 +93,7 @@ def _tool_defs(tools) -> list[dict]:
 
 
 def _tool_result_text(result: object) -> str:
+    """Extract text content from a tool result object or dict payload."""
     content = getattr(result, "content", None)
     if not isinstance(content, list) and isinstance(result, Mapping):
         content = result.get("content")
@@ -231,16 +233,15 @@ async def run_agent(
     transport: str,
     sse_url: str,
 ) -> None:
-    if transport not in {"stdio", "sse"}:
-        raise ValueError(f"Unsupported transport: {transport!r}. Expected one of: 'stdio', 'sse'.")
-
     if transport == "stdio":
         parts = shlex.split(server_command)
         if not parts:
             raise ValueError("Server command cannot be empty.")
         connection = server_command
-    else:
+    elif transport == "sse":
         connection = sse_url
+    else:
+        raise ValueError(f"Unsupported transport: {transport!r}. Expected one of: 'stdio', 'sse'.")
 
     async with Client(connection, log_handler=_server_log_handler) as session:
         try:
@@ -354,8 +355,8 @@ async def run_agent(
                     console.print(f"[dim] > {name}({args})[/dim]")
                     logger.info("Tool call started name=%s args_keys=%s", name, sorted(args.keys()))
 
+                    start = time.perf_counter()
                     try:
-                        start = time.perf_counter()
                         result = await session.call_tool(name, args)
                         duration_ms = int((time.perf_counter() - start) * 1000)
                         result_text = _tool_result_text(result)
