@@ -9,7 +9,7 @@ from mcp.client.stdio import stdio_client
 from rich.console import Console
 from rich.markdown import Markdown
 
-from config import CHAT_MODEL, OLLAMA_BASE_URL
+from config import CHAT_MODEL, EMBED_MODEL, OLLAMA_BASE_URL
 
 console = Console()
 ollama_client = ollama.Client(host=OLLAMA_BASE_URL)
@@ -57,7 +57,7 @@ async def run_agent() -> None:
         tools = _tool_defs(tool_resp.tools)
 
         console.print("[bold green]FastMCP + ChromaDB agent ready.[/bold green]")
-        console.print("[dim]phi4-mini:3.8b-q4_K_M | embeddinggemma:300m-qat-q8_0[/dim]")
+        console.print(f"[dim]{CHAT_MODEL} | {EMBED_MODEL}[/dim]")
         console.print("[dim]Type 'quit' to exit.[/dim]")
 
         history: list[dict] = []

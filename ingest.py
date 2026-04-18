@@ -44,7 +44,7 @@ def chunk_text(text: str) -> list[str]:
     return chunks
 
 
-def embed(text: str) -> list[float]:
+def embed_text(text: str) -> list[float]:
     """Embed text using the configured Ollama embedding model."""
     try:
         resp = ollama.embed(model=EMBED_MODEL, input=text)
@@ -75,7 +75,7 @@ def ingest_file(path: Path) -> None:
         doc_id = f"{path.stem}-{i}"
         col.upsert(
             ids=[doc_id],
-            embeddings=[embed(chunk)],
+            embeddings=[embed_text(chunk)],
             documents=[chunk],
             metadatas=[{"source": path.name, "chunk": i}],
         )

@@ -8,7 +8,14 @@ import chromadb
 import ollama as ollama_client
 from fastmcp import FastMCP
 
-from config import CHROMA_PATH, COLLECTION_NAME, EMBED_MODEL, OLLAMA_BASE_URL, TOP_K
+from config import (
+    CHROMA_PATH,
+    COLLECTION_NAME,
+    EMBED_MODEL,
+    MAX_RESULT_PREVIEW_LENGTH,
+    OLLAMA_BASE_URL,
+    TOP_K,
+)
 
 chroma = chromadb.PersistentClient(path=CHROMA_PATH)
 col = chroma.get_or_create_collection(
@@ -105,7 +112,7 @@ def semantic_search(query: str, n_results: int = TOP_K, source_filter: str = "")
         metadata = _as_metadata(meta)
         score = 1.0 - dist if isinstance(dist, (float, int)) else 0.0
         lines.append(f"[{i}] score={score:.3f} source={metadata.get('source', '')}")
-        lines.append((doc or "")[:400])
+        lines.append((doc or "")[:MAX_RESULT_PREVIEW_LENGTH])
         lines.append("")
 
     return "\n".join(lines).strip() if lines else "No results found."
