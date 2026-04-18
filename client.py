@@ -39,6 +39,7 @@ conversation_col = chroma.get_or_create_collection(
 )
 EMPTY_MESSAGE_SENTINEL = "__EMPTY_MESSAGE__"
 LOGGING_LEVEL_MAP = logging.getLevelNamesMapping()
+# Prevents runaway LLM/tool loops from spinning forever in a single user turn.
 MAX_TOOL_ITERATIONS_PER_TURN = 8
 
 
@@ -360,8 +361,7 @@ async def run_agent(
 
             llm_iteration = 0
             while True:
-                llm_iteration += 1
-                if llm_iteration > MAX_TOOL_ITERATIONS_PER_TURN:
+                if llm_iteration >= MAX_TOOL_ITERATIONS_PER_TURN:
                     warning_msg = f"Stopped after {MAX_TOOL_ITERATIONS_PER_TURN} consecutive tool-call iterations."
                     logger.warning(warning_msg)
                     console.print(f"[bold yellow]Warning:[/bold yellow] {warning_msg}")
@@ -370,6 +370,7 @@ async def run_agent(
                     _persist_message(session_id, turn, assistant_message)
                     turn += 1
                     break
+                llm_iteration += 1
 
                 llm_start = time.perf_counter()
                 logger.info(
@@ -473,6 +474,8 @@ async def run_agent(
 
                 for name, args, tool_call_id, args_valid in executable_calls:
                     if not args_valid:
+                        warning_msg = f"Tool call arguments for '{name}' were malformed; using empty arguments."
+                        console.print(f"[bold yellow]Warning:[/bold yellow] {warning_msg}")
                         logger.warning(
                             "Tool call arguments were not valid JSON object; using empty arguments "
                             "name=%s tool_call_id=%s",
