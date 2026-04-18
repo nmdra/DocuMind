@@ -51,7 +51,7 @@ STRICT_RAG_SYSTEM_PROMPT = (
 )
 SOURCE_CITATION_PATTERN = re.compile(r"\[Source:\s*([^\]]+)\]")
 SOURCE_LINE_PATTERN = re.compile(r"source=(.+?)\s*$")
-NO_RESULTS_MESSAGE = "No results found."
+SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])|\n+")
 
 
 def _configure_logging(level_name: str) -> None:
@@ -117,9 +117,7 @@ def _has_sentence_level_citations(content: str) -> bool:
     stripped = content.strip()
     if not stripped:
         return False
-    sentences = [
-        s.strip() for s in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])|\n+", stripped) if s.strip()
-    ]
+    sentences = [s.strip() for s in SENTENCE_SPLIT_PATTERN.split(stripped) if s.strip()]
     if not sentences:
         return False
     return all(SOURCE_CITATION_PATTERN.search(sentence) for sentence in sentences)
@@ -146,7 +144,7 @@ def _context_block(context_text: str) -> str:
 
 def _is_no_results_context(context_text: str) -> bool:
     normalized = context_text.strip().lower()
-    return normalized == NO_RESULTS_MESSAGE.lower() or normalized.startswith("no results found")
+    return normalized.startswith("no results found")
 
 
 def _embed(text: str) -> list[float]:
