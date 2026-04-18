@@ -90,7 +90,7 @@ def semantic_search(query: str, n_results: int = TOP_K, source_filter: str = "")
         source_filter: If set, restrict results to this source label.
     """
     if n_results < 1:
-        return "n_results must be >= 1"
+        raise ValueError("n_results must be >= 1")
 
     vec = _embed(query)
     where = {"source": source_filter} if source_filter else None
