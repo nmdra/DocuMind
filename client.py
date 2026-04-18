@@ -117,7 +117,9 @@ def _has_sentence_level_citations(content: str) -> bool:
     stripped = content.strip()
     if not stripped:
         return False
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+|\n+", stripped) if s.strip()]
+    sentences = [
+        s.strip() for s in re.split(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])|\n+", stripped) if s.strip()
+    ]
     if not sentences:
         return False
     return all(SOURCE_CITATION_PATTERN.search(sentence) for sentence in sentences)
@@ -273,7 +275,10 @@ async def run_agent(
             raw_tools = getattr(tool_resp, "tools", tool_resp)
             tool_names = set()
             for t in (raw_tools if isinstance(raw_tools, list) else []):
-                name = getattr(t, "name", None) if not isinstance(t, Mapping) else t.get("name")
+                if isinstance(t, Mapping):
+                    name = t.get("name")
+                else:
+                    name = getattr(t, "name", None)
                 if isinstance(name, str) and name:
                     tool_names.add(name)
         except Exception:  # pragma: no cover - transport/tool-list failure path
