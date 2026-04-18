@@ -118,11 +118,12 @@ cd <project-root>
 uv run python client.py --transport sse --sse-url "http://127.0.0.1:8000/sse"
 ```
 
-Enable client log forwarding/handling for server log messages:
+Client log forwarding is always enabled; `--log-level` only changes verbosity:
 
 ```bash
 cd <project-root>
 uv run python client.py --log-level INFO
+uv run python client.py --log-level DEBUG
 ```
 
 ## FastMCP tools (MVP)

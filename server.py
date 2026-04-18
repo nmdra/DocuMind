@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import uuid
 from collections.abc import Mapping
@@ -183,7 +184,7 @@ async def semantic_search(
 async def collection_stats(ctx: Context | None = None) -> str:
     """Return document count and collection metadata."""
     try:
-        count = col.count()
+        count = await asyncio.to_thread(col.count)
     except Exception as exc:  # pragma: no cover - external DB failure path
         if ctx:
             await ctx.error("Failed to read collection statistics", extra={"error": str(exc)})
