@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import argparse
+import asyncio
 import json
 import shlex
 from collections.abc import Mapping
@@ -9,6 +9,7 @@ from collections.abc import Mapping
 import chromadb
 import ollama
 from mcp import ClientSession, StdioServerParameters
+from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from rich.console import Console
 from rich.markdown import Markdown
@@ -17,10 +18,13 @@ from config import (
     CHAT_MODEL,
     CHROMA_PATH,
     CONVERSATION_COLLECTION_NAME,
-    DEFAULT_SERVER_COMMAND,
     DEFAULT_CONVERSATION_SESSION_ID,
+    DEFAULT_SERVER_COMMAND,
+    DEFAULT_TRANSPORT,
     EMBED_MODEL,
     OLLAMA_BASE_URL,
+    SSE_HOST,
+    SSE_PORT,
 )
 
 console = Console()
@@ -76,7 +80,9 @@ def _embed(text: str) -> list[float]:
 
 
 def _load_history(session_id: str) -> list[dict]:
-    results = conversation_col.get(where={"session_id": session_id}, include=["documents", "metadatas"])
+    results = conversation_col.get(
+        where={"session_id": session_id}, include=["documents", "metadatas"]
+    )
     docs = results.get("documents") or []
     metas = results.get("metadatas") or []
 
@@ -140,22 +146,44 @@ def parse_args() -> argparse.Namespace:
         help="Conversation session ID for persisted memory.",
     )
     parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse"],
+        default=DEFAULT_TRANSPORT,
+        help="Transport used to connect to the MCP server.",
+    )
+    parser.add_argument(
         "--server-command",
         default=DEFAULT_SERVER_COMMAND,
-        help="Command used to start the MCP server subprocess.",
+        help="Command used to start the MCP server subprocess when transport=stdio.",
+    )
+    parser.add_argument(
+        "--sse-url",
+        default=f"http://{SSE_HOST}:{SSE_PORT}/sse",
+        help="SSE endpoint URL when transport=sse.",
     )
     return parser.parse_args()
 
 
-async def run_agent(session_id: str, server_command: str) -> None:
-    parts = shlex.split(server_command)
-    if not parts:
-        raise ValueError("Server command cannot be empty.")
+async def run_agent(
+    session_id: str,
+    server_command: str,
+    transport: str,
+    sse_url: str,
+) -> None:
+    if transport == "stdio":
+        parts = shlex.split(server_command)
+        if not parts:
+            raise ValueError("Server command cannot be empty.")
 
-    params = StdioServerParameters(command=parts[0], args=parts[1:])
+        params = StdioServerParameters(command=parts[0], args=parts[1:])
+        transport_context = stdio_client(params)
+    elif transport == "sse":
+        transport_context = sse_client(sse_url)
+    else:
+        raise ValueError(f"Unsupported transport: {transport!r}. Expected one of: 'stdio', 'sse'.")
 
     async with (
-        stdio_client(params) as (read, write),
+        transport_context as (read, write),
         ClientSession(read, write) as session,
     ):
         await session.initialize()
@@ -164,15 +192,13 @@ async def run_agent(session_id: str, server_command: str) -> None:
 
         console.print("[bold green]FastMCP + ChromaDB agent ready.[/bold green]")
         console.print(f"[dim]{CHAT_MODEL} | {EMBED_MODEL}[/dim]")
-        console.print(f"[dim]Session: {session_id}[/dim]")
+        console.print(f"[dim]Session: {session_id} | transport={transport}[/dim]")
         console.print("[dim]Type 'quit' to exit.[/dim]")
 
         def _next_persisted_turn(session_id: str) -> int:
             try:
                 client = chromadb.PersistentClient(path=CHROMA_PATH)
-                collection = client.get_or_create_collection(
-                    name=CONVERSATION_COLLECTION_NAME
-                )
+                collection = client.get_or_create_collection(name=CONVERSATION_COLLECTION_NAME)
                 records = collection.get(
                     where={"session_id": session_id},
                     include=["metadatas"],
@@ -280,4 +306,11 @@ async def run_agent(session_id: str, server_command: str) -> None:
 
 if __name__ == "__main__":
     args = parse_args()
-    asyncio.run(run_agent(args.session_id, args.server_command))
+    asyncio.run(
+        run_agent(
+            args.session_id,
+            args.server_command,
+            args.transport,
+            args.sse_url,
+        )
+    )

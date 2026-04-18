@@ -81,9 +81,9 @@ uv run python server.py --transport sse --host 127.0.0.1 --port 8000
 
 ## Run the interactive client
 
-Client uses stdio transport and persists conversation history in Chroma (`conversation_memory` collection).
+Client persists conversation history in Chroma (`conversation_memory` collection) and supports stdio and SSE transports.
 
-Launch interactive client with default session id:
+Launch interactive client with default session id (stdio):
 
 ```bash
 cd <project-root>
@@ -97,11 +97,18 @@ cd <project-root>
 uv run python client.py --session-id my-session
 ```
 
-Override the server launch command used by the client:
+Override the server launch command used by the client (stdio mode):
 
 ```bash
 cd <project-root>
-uv run python client.py --server-command "uv run python server.py --transport stdio"
+uv run python client.py --transport stdio --server-command "uv run python server.py --transport stdio"
+```
+
+Connect client to an already running SSE server:
+
+```bash
+cd <project-root>
+uv run python client.py --transport sse --sse-url "http://127.0.0.1:8000/sse"
 ```
 
 ## FastMCP tools (MVP)
