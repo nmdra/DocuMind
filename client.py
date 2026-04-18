@@ -177,8 +177,10 @@ async def run_agent(
 
         params = StdioServerParameters(command=parts[0], args=parts[1:])
         transport_context = stdio_client(params)
-    else:
+    elif transport == "sse":
         transport_context = sse_client(sse_url)
+    else:
+        raise ValueError(f"Unsupported transport: {transport!r}. Expected one of: 'stdio', 'sse'.")
 
     async with (
         transport_context as (read, write),
