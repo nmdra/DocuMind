@@ -50,7 +50,9 @@ STRICT_RAG_SYSTEM_PROMPT = (
     "5. Cite only sources that appear in the provided context blocks."
 )
 SOURCE_CITATION_PATTERN = re.compile(r"\[Source:\s*([^\]]+)\]")
-SENTENCE_PATTERN = re.compile(r"[^.!?\n]+[.!?]?")
+SENTENCE_PATTERN = re.compile(r"[^.!?\n]+[.!?]")
+SOURCE_LINE_PATTERN = re.compile(r"source=(.+)$")
+NO_RESULTS_MESSAGE = "No results found."
 
 
 def _configure_logging(level_name: str) -> None:
@@ -99,9 +101,10 @@ def _tool_result_text(result: object) -> str:
 def _extract_sources_from_context(context_text: str) -> set[str]:
     sources: set[str] = set()
     for line in context_text.splitlines():
-        if "source=" not in line:
+        match = SOURCE_LINE_PATTERN.search(line.strip())
+        if not match:
             continue
-        source = line.split("source=", maxsplit=1)[1].strip()
+        source = match.group(1).strip()
         if source:
             sources.add(source)
     return sources
@@ -335,7 +338,7 @@ async def run_agent(
                     {"query": user_input, "n_results": TOP_K},
                 )
                 context_text = _tool_result_text(context_result)
-                if not context_text or context_text.strip() == "No results found.":
+                if not context_text or context_text.strip() == NO_RESULTS_MESSAGE:
                     assistant_text = STRICT_RAG_FALLBACK
                 else:
                     allowed_sources = _extract_sources_from_context(context_text)
