@@ -257,6 +257,9 @@ async def run_agent(
             tools = _tool_defs(raw_tools if isinstance(raw_tools, list) else [])
         except Exception:  # pragma: no cover - transport/tool-list failure path
             logger.exception("Failed to list server tools. Agent will continue without server tools.")
+            console.print(
+                "[bold yellow]Warning:[/bold yellow] Failed to list MCP tools; continuing without tool access."
+            )
             tools = []
 
         console.print("[bold green]FastMCP + ChromaDB agent ready.[/bold green]")

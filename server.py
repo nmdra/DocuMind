@@ -33,7 +33,6 @@ col = chroma.get_or_create_collection(
 mcp = FastMCP("chromadb-tools")
 ollama = ollama_client.Client(host=OLLAMA_BASE_URL)
 logger = logging.getLogger(__name__)
-to_client_logger = get_logger(name="fastmcp.server.context.to_client")
 
 
 def _configure_logging(level_name: str, to_client_debug: bool) -> None:
@@ -43,6 +42,7 @@ def _configure_logging(level_name: str, to_client_debug: bool) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     if to_client_debug:
+        to_client_logger = get_logger(name="fastmcp.server.context.to_client")
         to_client_logger.setLevel(logging.DEBUG)
 
 
