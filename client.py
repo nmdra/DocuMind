@@ -62,7 +62,12 @@ def _normalize_tool_args(args: object) -> dict:
 
 
 def _embed(text: str) -> list[float]:
-    resp = ollama_client.embed(model=EMBED_MODEL, input=text)
+    try:
+        resp = ollama_client.embed(model=EMBED_MODEL, input=text)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to generate embedding with Ollama model {EMBED_MODEL!r}."
+        ) from exc
     embeddings = resp.get("embeddings")
     embedding = embeddings[0] if isinstance(embeddings, list) and embeddings else None
     if not isinstance(embedding, list):
