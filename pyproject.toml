@@ -1,0 +1,17 @@
+[project]
+name = "mcp-chroma-agent"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.12"
+dependencies = [
+    "chromadb>=1.5.8",
+    "fastmcp>=3.2.4",
+    "httpx>=0.28.1",
+    "ollama>=0.6.1",
+    "rich>=15.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.11",
+]
