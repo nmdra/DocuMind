@@ -3,14 +3,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import shlex
+import time
 from collections.abc import Mapping
 
 import chromadb
+import fastmcp.client.logging as fastmcp_logging
 import ollama
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.sse import sse_client
-from mcp.client.stdio import stdio_client
+from fastmcp import Client
 from rich.console import Console
 from rich.markdown import Markdown
 
@@ -18,6 +19,7 @@ from config import (
     CHAT_MODEL,
     CHROMA_PATH,
     CONVERSATION_COLLECTION_NAME,
+    DEFAULT_LOG_LEVEL,
     DEFAULT_CONVERSATION_SESSION_ID,
     DEFAULT_SERVER_COMMAND,
     DEFAULT_TRANSPORT,
@@ -28,6 +30,7 @@ from config import (
 )
 
 console = Console()
+logger = logging.getLogger(__name__)
 ollama_client = ollama.Client(host=OLLAMA_BASE_URL)
 chroma = chromadb.PersistentClient(path=CHROMA_PATH)
 conversation_col = chroma.get_or_create_collection(
@@ -35,21 +38,83 @@ conversation_col = chroma.get_or_create_collection(
     metadata={"hnsw:space": "cosine"},
 )
 EMPTY_MESSAGE_SENTINEL = "__EMPTY_MESSAGE__"
+LOGGING_LEVEL_MAP = logging.getLevelNamesMapping()
+
+
+def _configure_logging(level_name: str) -> None:
+    level = getattr(logging, level_name.upper(), logging.INFO)
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+
+async def _server_log_handler(message: fastmcp_logging.LogMessage) -> None:
+    """Handle MCP server log messages by forwarding them to Python logging."""
+    data = message.data if isinstance(message.data, Mapping) else {}
+    msg = data.get("msg")
+    if not isinstance(msg, str) or not msg:
+        msg = str(data) if data else repr(message)
+    if isinstance(message.level, str):
+        level = LOGGING_LEVEL_MAP.get(message.level.upper(), logging.INFO)
+    elif isinstance(message.level, int) and logging.DEBUG <= message.level <= logging.CRITICAL:
+        level = message.level
+    else:
+        level = logging.INFO
+    logger.log(level, "[mcp:%s] %s", message.logger or "server", msg)
 
 
 def _tool_defs(tools) -> list[dict]:
     """Convert MCP tools into Ollama function-tool definitions."""
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": t.name,
-                "description": t.description,
-                "parameters": t.inputSchema,
-            },
-        }
-        for t in tools
-    ]
+    defs: list[dict] = []
+    for t in tools:
+        name = getattr(t, "name", None)
+        if not isinstance(name, str) and isinstance(t, Mapping):
+            name = t.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+
+        description = getattr(t, "description", "")
+        if not isinstance(description, str) and isinstance(t, Mapping):
+            description = t.get("description", "")
+
+        schema = getattr(t, "inputSchema", None)
+        if schema is None and isinstance(t, Mapping):
+            schema = t.get("inputSchema") or t.get("input_schema")
+        if not isinstance(schema, Mapping):
+            schema = {"type": "object", "properties": {}}
+
+        defs.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": schema,
+                },
+            }
+        )
+    return defs
+
+
+def _tool_result_text(result: object) -> str:
+    """Extract text content from a tool result object or dict payload."""
+    content = getattr(result, "content", None)
+    if not isinstance(content, list) and isinstance(result, Mapping):
+        content = result.get("content")
+    if not isinstance(content, list):
+        return ""
+    first = next(iter(content), None)
+    if first is None:
+        return ""
+    text = getattr(first, "text", None)
+    if isinstance(text, str):
+        return text
+    if isinstance(first, Mapping):
+        text = first.get("text")
+        if isinstance(text, str):
+            return text
+    return str(first)
 
 
 def _normalize_tool_args(args: object) -> dict:
@@ -161,6 +226,11 @@ def parse_args() -> argparse.Namespace:
         default=f"http://{SSE_HOST}:{SSE_PORT}/sse",
         help="SSE endpoint URL when transport=sse.",
     )
+    parser.add_argument(
+        "--log-level",
+        default=DEFAULT_LOG_LEVEL,
+        help="Python logging level (e.g., DEBUG, INFO, WARNING, ERROR).",
+    )
     return parser.parse_args()
 
 
@@ -174,21 +244,23 @@ async def run_agent(
         parts = shlex.split(server_command)
         if not parts:
             raise ValueError("Server command cannot be empty.")
-
-        params = StdioServerParameters(command=parts[0], args=parts[1:])
-        transport_context = stdio_client(params)
+        server_connection = server_command
     elif transport == "sse":
-        transport_context = sse_client(sse_url)
+        server_connection = sse_url
     else:
         raise ValueError(f"Unsupported transport: {transport!r}. Expected one of: 'stdio', 'sse'.")
 
-    async with (
-        transport_context as (read, write),
-        ClientSession(read, write) as session,
-    ):
-        await session.initialize()
-        tool_resp = await session.list_tools()
-        tools = _tool_defs(tool_resp.tools)
+    async with Client(server_connection, log_handler=_server_log_handler) as session:
+        try:
+            tool_resp = await session.list_tools()
+            raw_tools = getattr(tool_resp, "tools", tool_resp)
+            tools = _tool_defs(raw_tools if isinstance(raw_tools, list) else [])
+        except Exception:  # pragma: no cover - transport/tool-list failure path
+            logger.exception("Failed to list server tools. Agent will continue without server tools.")
+            console.print(
+                "[bold yellow]Warning:[/bold yellow] Failed to list MCP tools; continuing without tool access."
+            )
+            tools = []
 
         console.print("[bold green]FastMCP + ChromaDB agent ready.[/bold green]")
         console.print(f"[dim]{CHAT_MODEL} | {EMBED_MODEL}[/dim]")
@@ -291,11 +363,27 @@ async def run_agent(
                     args = _normalize_tool_args(tc.function.arguments)
 
                     console.print(f"[dim] > {name}({args})[/dim]")
+                    logger.info("Tool call started name=%s args_keys=%s", name, sorted(args.keys()))
 
+                    start = time.perf_counter()
                     try:
                         result = await session.call_tool(name, args)
-                        result_text = result.content[0].text if result.content else ""
+                        duration_ms = int((time.perf_counter() - start) * 1000)
+                        result_text = _tool_result_text(result)
+                        logger.info(
+                            "Tool call succeeded name=%s duration_ms=%d result_length=%d",
+                            name,
+                            duration_ms,
+                            len(result_text),
+                        )
                     except Exception as exc:  # pragma: no cover - transport/tool failure path
+                        duration_ms = int((time.perf_counter() - start) * 1000)
+                        logger.error(
+                            "Tool call failed name=%s duration_ms=%d error=%s",
+                            name,
+                            duration_ms,
+                            exc,
+                        )
                         result_text = f"Tool call failed: {exc}"
 
                     tool_message = {"role": "tool", "content": result_text, "name": name}
@@ -306,6 +394,7 @@ async def run_agent(
 
 if __name__ == "__main__":
     args = parse_args()
+    _configure_logging(args.log_level)
     asyncio.run(
         run_agent(
             args.session_id,

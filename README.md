@@ -72,6 +72,13 @@ cd <project-root>
 uv run python server.py --transport stdio
 ```
 
+Enable verbose MCP context logs on the server:
+
+```bash
+cd <project-root>
+uv run python server.py --transport stdio --log-level DEBUG --to-client-debug
+```
+
 Run FastMCP server over SSE:
 
 ```bash
@@ -109,6 +116,14 @@ Connect client to an already running SSE server:
 ```bash
 cd <project-root>
 uv run python client.py --transport sse --sse-url "http://127.0.0.1:8000/sse"
+```
+
+Client log forwarding is always enabled; `--log-level` only changes verbosity:
+
+```bash
+cd <project-root>
+uv run python client.py --log-level INFO
+uv run python client.py --log-level DEBUG
 ```
 
 ## FastMCP tools (MVP)
