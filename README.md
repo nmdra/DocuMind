@@ -11,6 +11,29 @@ All components run on your machine:
 
 No cloud APIs are required.
 
+## Architecture (C4, Mermaid)
+
+```mermaid
+C4Container
+title DocuMind - C4 Container Diagram
+Person(user, "User", "Ingests documents and chats with the assistant")
+
+System_Ext(ollama, "Ollama", "Local model runtime for chat and embeddings")
+
+System_Boundary(documind, "DocuMind (Local)") {
+  Container(client, "Interactive Client (client.py)", "Python CLI", "Runs chat loop, calls MCP tools, stores conversation memory")
+  Container(server, "FastMCP Server (server.py)", "Python / FastMCP", "Exposes add_document, semantic_search, collection_stats")
+  ContainerDb(chroma, "ChromaDB", "Local vector database", "Stores ingested documents and conversation memory")
+}
+
+Rel(user, client, "Uses", "CLI")
+Rel(client, server, "Invokes tools", "MCP over stdio or SSE")
+Rel(server, ollama, "Generates embeddings", "HTTP")
+Rel(client, ollama, "Runs chat + embeddings", "HTTP")
+Rel(server, chroma, "Reads/writes document vectors", "Local DB API")
+Rel(client, chroma, "Reads/writes conversation memory", "Local DB API")
+```
+
 ## Prerequisites
 
 - Python 3.13+
