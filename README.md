@@ -88,6 +88,19 @@ Start Ollama if needed:
 ollama serve
 ```
 
+Tune Ollama for multi-user workloads and fewer cold starts:
+
+```bash
+export OLLAMA_NUM_PARALLEL=4
+export OLLAMA_MAX_LOADED_MODELS=4
+export OLLAMA_KEEP_ALIVE=-1
+ollama serve
+```
+
+- `OLLAMA_NUM_PARALLEL`: max concurrent requests handled per model (increase based on expected simultaneous users/tasks and available VRAM).
+- `OLLAMA_MAX_LOADED_MODELS`: max number of different models kept in VRAM at once (raise if you switch models often and have VRAM headroom).
+- `OLLAMA_KEEP_ALIVE`: model idle retention window (`-1` keep loaded indefinitely, e.g. `24h`/`60m` for timed retention, `0` to unload immediately).
+
 Run FastMCP server over stdio (default):
 
 ```bash
