@@ -162,8 +162,40 @@ async def run_agent(session_id: str, server_command: str) -> None:
         console.print(f"[dim]Session: {session_id}[/dim]")
         console.print("[dim]Type 'quit' to exit.[/dim]")
 
+        def _next_persisted_turn(session_id: str) -> int:
+            try:
+                client = chromadb.PersistentClient(path=CHROMA_PATH)
+                collection = client.get_or_create_collection(
+                    name=CONVERSATION_COLLECTION_NAME
+                )
+                records = collection.get(
+                    where={"session_id": session_id},
+                    include=["metadatas"],
+                )
+            except Exception:
+                return 0
+
+            max_turn = -1
+            for metadata in records.get("metadatas") or []:
+                if isinstance(metadata, Mapping):
+                    stored_turn = metadata.get("turn")
+                    if isinstance(stored_turn, int):
+                        max_turn = max(max_turn, stored_turn)
+
+            if max_turn >= 0:
+                return max_turn + 1
+
+            for record_id in records.get("ids") or []:
+                if not isinstance(record_id, str):
+                    continue
+                prefix, sep, suffix = record_id.rpartition("-")
+                if prefix == session_id and sep and suffix.isdigit():
+                    max_turn = max(max_turn, int(suffix))
+
+            return max_turn + 1 if max_turn >= 0 else 0
+
         history = _load_history(session_id)
-        turn = len(history)
+        turn = _next_persisted_turn(session_id)
         if history:
             console.print(f"[dim]Loaded {len(history)} persisted message(s).[/dim]")
 
