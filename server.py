@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import re
 import uuid
 from collections.abc import Mapping
 from typing import Any
@@ -34,6 +35,7 @@ col = chroma.get_or_create_collection(
 mcp = FastMCP("chromadb-tools")
 ollama = ollama_client.Client(host=OLLAMA_BASE_URL)
 logger = logging.getLogger(__name__)
+URL_PATTERN = re.compile(r"https?://[^\s)>\]\"']+")
 
 
 def _configure_logging(level_name: str, to_client_debug: bool) -> None:
@@ -69,6 +71,12 @@ def _as_metadata(meta: Any) -> Mapping[str, Any]:
     if isinstance(meta, Mapping):
         return meta
     return {}
+
+
+def _extract_urls(text: str) -> list[str]:
+    urls = URL_PATTERN.findall(text)
+    unique_urls = list(dict.fromkeys(urls))
+    return unique_urls[:3]
 
 
 @mcp.tool()
@@ -173,6 +181,9 @@ async def semantic_search(
         score = 1.0 - dist if isinstance(dist, (float, int)) else 0.0
         lines.append(f"[{i}] score={score:.3f} source={metadata.get('source', '')}")
         lines.append((doc or "")[:MAX_RESULT_PREVIEW_LENGTH])
+        urls = _extract_urls(doc or "")
+        if urls:
+            lines.append(f"links: {', '.join(urls)}")
         lines.append("")
 
     if ctx:

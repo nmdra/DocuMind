@@ -39,6 +39,12 @@ conversation_col = chroma.get_or_create_collection(
 )
 EMPTY_MESSAGE_SENTINEL = "__EMPTY_MESSAGE__"
 LOGGING_LEVEL_MAP = logging.getLevelNamesMapping()
+SYSTEM_PROMPT = (
+    "You are a local document assistant. For requests about ingested documents, rely on MCP tools "
+    "(especially semantic_search) before answering. If relevant links appear in retrieved text, return "
+    "them explicitly. Never claim generic platform limitations when tools are available. If results are "
+    "empty, say so and ask the user to ingest or refine the query."
+)
 
 
 def _configure_logging(level_name: str) -> None:
@@ -314,7 +320,11 @@ async def run_agent(
 
             while True:
                 try:
-                    response = ollama_client.chat(model=CHAT_MODEL, messages=history, tools=tools)
+                    response = ollama_client.chat(
+                        model=CHAT_MODEL,
+                        messages=[{"role": "system", "content": SYSTEM_PROMPT}, *history],
+                        tools=tools,
+                    )
                 except Exception as exc:  # pragma: no cover - network/service failure path
                     console.print(f"[bold red]Ollama request failed:[/bold red] {exc}")
                     break
